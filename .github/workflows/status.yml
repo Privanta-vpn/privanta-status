@@ -29,7 +29,7 @@ jobs:
           set -euo pipefail
           install -d -m 0755 _site
           python3 probe.py --config probe-config.json --output status.json
-          install -m 0644 index.html styles.css app.js status.json _site/
+          install -m 0644 index.html styles.css app.js status.json CNAME _site/
           install -d -m 0755 _site/assets
           install -m 0644 assets/privanta-logomark.png _site/assets/
       - uses: actions/configure-pages@983d7736d9b0ae728b81ab479565c72886d7745b # v5
