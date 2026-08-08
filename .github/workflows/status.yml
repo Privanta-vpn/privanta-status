@@ -2,7 +2,8 @@ name: public-status
 
 on:
   schedule:
-    - cron: "*/5 * * * *"
+    # Avoid the start-of-hour load peak documented for scheduled Actions.
+    - cron: "2,7,12,17,22,27,32,37,42,47,52,57 * * * *"
   push:
     branches: [main]
   workflow_dispatch:
@@ -19,6 +20,7 @@ permissions:
 jobs:
   probe-and-deploy:
     runs-on: ubuntu-24.04
+    timeout-minutes: 5
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
