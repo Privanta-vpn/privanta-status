@@ -6,6 +6,11 @@ const labels = {
   outage: { state: "Outage" },
 };
 
+const statusSources = [
+  "https://46-173-214-4.sslip.io/status.json",
+  "status.json",
+];
+
 function safeState(value) {
   return ["operational", "degraded", "major_outage", "outage"].includes(value) ? value : "unknown";
 }
@@ -55,10 +60,44 @@ function renderStatus(status) {
   }
 }
 
-fetch(`status.json?ts=${Date.now()}`, { cache: "no-store" })
-  .then((response) => {
-    if (!response.ok) throw new Error("status response unavailable");
-    return response.json();
+function fetchStatus(source) {
+  const separator = source.includes("?") ? "&" : "?";
+  return fetch(`${source}${separator}ts=${Date.now()}`, { cache: "no-store" })
+    .then((response) => {
+      if (!response.ok) throw new Error("status response unavailable");
+      return response.json();
+    })
+    .then((status) => {
+      const generated = new Date(status.generated_at);
+      const age = Date.now() - generated.getTime();
+      const validComponents = Array.isArray(status.components)
+        && status.components.length >= 3
+        && status.components.every((component) => component
+          && typeof component.id === "string"
+          && typeof component.name === "string"
+          && typeof component.detail === "string"
+          && ["operational", "degraded", "outage"].includes(component.status));
+      if (status.schema_version !== 1
+        || !["operational", "degraded", "major_outage"].includes(status.overall_status)
+        || !Number.isFinite(generated.getTime())
+        || !Number.isInteger(status.max_age_seconds)
+        || status.max_age_seconds < 300
+        || status.max_age_seconds > 3600
+        || age < -300000
+        || !validComponents) {
+        throw new Error("status response invalid");
+      }
+      return status;
+    });
+}
+
+Promise.allSettled(statusSources.map(fetchStatus))
+  .then((results) => results
+    .filter((result) => result.status === "fulfilled")
+    .map((result) => result.value)
+    .sort((left, right) => new Date(right.generated_at) - new Date(left.generated_at)))
+  .then((statuses) => {
+    if (statuses.length === 0) throw new Error("status response unavailable");
+    renderStatus(statuses[0]);
   })
-  .then(renderStatus)
   .catch(() => renderUnknown("Unable to load the latest independent probe result."));
