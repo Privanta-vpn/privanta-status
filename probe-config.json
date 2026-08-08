@@ -1,0 +1,23 @@
+{
+  "schema_version": 1,
+  "api": {
+    "origin": "https://api.privanta.ai",
+    "expected_egress_class": "external"
+  },
+  "bootstrap": {
+    "root_public_key": "bootstrap-root-public.pem",
+    "endpoints": [
+      {"id": "primary", "url": "https://cfg-stg.privanta.ai"},
+      {"id": "recovery", "url": "https://cfg-stg.privanta.uk"},
+      {"id": "independent", "url": "https://raw.githubusercontent.com/Privanta-vpn/privanta-bootstrap/main"}
+    ]
+  },
+  "releases": {
+    "root_public_key": "release-root-public.pem",
+    "endpoints": [
+      {"id": "android_tv", "url": "https://privanta.ai/apps/privanta_tv.json"},
+      {"id": "android_phone", "url": "https://privanta.ai/apps/privanta_phone.json"},
+      {"id": "windows", "url": "https://privanta.ai/apps/privanta_windows.json"}
+    ]
+  }
+}

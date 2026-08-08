@@ -1,0 +1,60 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="dark">
+  <meta name="theme-color" content="#101416">
+  <title>Privanta Status</title>
+  <link rel="icon" href="assets/privanta-logomark.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="https://privanta.ai" aria-label="Privanta home">
+      <img src="assets/privanta-logomark.png" alt="" width="40" height="40">
+      <span>Privanta</span>
+    </a>
+    <span class="header-label">Service status</span>
+  </header>
+
+  <main>
+    <section class="summary" aria-labelledby="summary-title">
+      <div class="summary-inner">
+        <span id="overall-indicator" class="status-indicator unknown" aria-hidden="true"></span>
+        <div>
+          <h1 id="summary-title">Checking service status</h1>
+          <p id="summary-detail">Loading the latest independent probe result.</p>
+        </div>
+      </div>
+    </section>
+
+    <section class="components" aria-labelledby="components-title">
+      <div class="section-heading">
+        <h2 id="components-title">Components</h2>
+        <time id="last-checked" datetime="">Not checked yet</time>
+      </div>
+      <div id="component-list" class="component-list" aria-live="polite">
+        <article class="component-row loading-row">
+          <div>
+            <h3>Independent probes</h3>
+            <p>Awaiting the latest result</p>
+          </div>
+          <span class="component-state">Checking</span>
+        </article>
+      </div>
+    </section>
+
+    <section class="scope" aria-labelledby="scope-title">
+      <h2 id="scope-title">Monitoring scope</h2>
+      <p id="scope-note">Public status is based on synthetic, privacy-safe checks.</p>
+    </section>
+  </main>
+
+  <footer>
+    <span>Privanta</span>
+    <a href="mailto:support@privanta.ai">Support</a>
+  </footer>
+  <script src="app.js" defer></script>
+</body>
+</html>
