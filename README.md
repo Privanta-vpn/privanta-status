@@ -11,5 +11,14 @@ stale origin report or an unavailable public page.
 GitHub's scheduled workflow remains an off-provider fallback and is
 best-effort; it is not the primary freshness mechanism.
 
-The probe verifies only public, bounded facts. Authenticated VPN payload remains
-an independent private monitoring gate and is explicitly not inferred here.
+The report uses schema version 2. Its VPN network component is generated from
+fresh synthetic relay probes delivered by every commercial IN through a
+TLS-protected, source-IP-allowlisted Pushgateway endpoint. Each credential is
+bound to one exact telemetry job. The public snapshot contains only aggregate
+expected, fresh, available and redundant path counts; it contains no node ID,
+address, customer session, destination or traffic content.
+
+Control API, bootstrap and application-update components still verify only
+public bounded facts. The VPN network component is never inferred from those
+HTTP checks. An invalid, stale, unauthenticated or inconsistent Data Plane
+snapshot fails closed to an outage state.

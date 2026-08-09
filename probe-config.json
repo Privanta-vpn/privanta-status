@@ -1,8 +1,12 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "api": {
     "origin": "https://api.privanta.ai",
     "expected_egress_class": "external"
+  },
+  "data_plane": {
+    "url": "https://46-173-214-4.sslip.io/data-plane.json",
+    "minimum_available_entry_paths": 1
   },
   "bootstrap": {
     "root_public_key": "bootstrap-root-public.pem",

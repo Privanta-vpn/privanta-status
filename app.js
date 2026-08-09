@@ -34,7 +34,7 @@ function renderStatus(status) {
   const indicator = document.getElementById("overall-indicator");
   indicator.className = `status-indicator ${overall}`;
   document.getElementById("summary-title").textContent = (labels[overall] || labels.unknown).title;
-  document.getElementById("summary-detail").textContent = "Latest independent synthetic checks completed.";
+  document.getElementById("summary-detail").textContent = "Latest independent control and authenticated network checks completed.";
   const checked = document.getElementById("last-checked");
   checked.dateTime = generated.toISOString();
   checked.textContent = `Checked ${new Intl.DateTimeFormat(undefined, { dateStyle: "medium", timeStyle: "short" }).format(generated)}`;
@@ -71,20 +71,24 @@ function fetchStatus(source) {
       const generated = new Date(status.generated_at);
       const age = Date.now() - generated.getTime();
       const validComponents = Array.isArray(status.components)
-        && status.components.length >= 3
+        && status.components.length >= 4
         && status.components.every((component) => component
           && typeof component.id === "string"
           && typeof component.name === "string"
           && typeof component.detail === "string"
           && ["operational", "degraded", "outage"].includes(component.status));
-      if (status.schema_version !== 1
+      const dataPlaneComponents = validComponents
+        ? status.components.filter((component) => component.id === "vpn-data-plane")
+        : [];
+      if (status.schema_version !== 2
         || !["operational", "degraded", "major_outage"].includes(status.overall_status)
         || !Number.isFinite(generated.getTime())
         || !Number.isInteger(status.max_age_seconds)
         || status.max_age_seconds < 300
         || status.max_age_seconds > 3600
         || age < -300000
-        || !validComponents) {
+        || !validComponents
+        || dataPlaneComponents.length !== 1) {
         throw new Error("status response invalid");
       }
       return status;

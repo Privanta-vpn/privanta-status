@@ -107,6 +107,18 @@ def _read_json(response: FetchResponse, name: str) -> dict[str, Any]:
     return value
 
 
+def _utc_time(raw: object, name: str) -> dt.datetime:
+    if not isinstance(raw, str):
+        raise StatusProbeError(f"{name} timestamp is invalid")
+    try:
+        parsed = dt.datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError as error:
+        raise StatusProbeError(f"{name} timestamp is invalid") from error
+    if parsed.tzinfo is None:
+        raise StatusProbeError(f"{name} timestamp is invalid")
+    return parsed.astimezone(dt.timezone.utc)
+
+
 def verify_ed25519(payload: bytes, signature: bytes, public_key: pathlib.Path) -> bool:
     if not public_key.is_file() or public_key.is_symlink() or public_key.stat().st_size > 64 * 1024:
         raise StatusProbeError("status trust key is absent or unsafe")
@@ -168,17 +180,27 @@ def _component(identifier: str, name: str, status: str, detail: str, durations: 
 
 
 def _validate_config(config: Mapping[str, Any], directory: pathlib.Path) -> dict[str, Any]:
-    required = {"schema_version", "api", "bootstrap", "releases"}
-    if set(config) != required or config.get("schema_version") != 1:
+    required = {"schema_version", "api", "bootstrap", "releases", "data_plane"}
+    if set(config) != required or config.get("schema_version") != 2:
         raise StatusProbeError("status probe config is incomplete or unexpected")
     api = config.get("api")
     bootstrap = config.get("bootstrap")
     releases = config.get("releases")
+    data_plane = config.get("data_plane")
     if not isinstance(api, dict) or set(api) != {"origin", "expected_egress_class"}:
         raise StatusProbeError("status API config is invalid")
     _https(api["origin"])
     if api["expected_egress_class"] not in {"ru", "external"}:
         raise StatusProbeError("status API egress class is invalid")
+    if not isinstance(data_plane, dict) or set(data_plane) != {
+        "url",
+        "minimum_available_entry_paths",
+    }:
+        raise StatusProbeError("status Data Plane config is invalid")
+    _https(data_plane["url"])
+    minimum_available = data_plane["minimum_available_entry_paths"]
+    if not isinstance(minimum_available, int) or not 1 <= minimum_available <= 32:
+        raise StatusProbeError("status Data Plane minimum is invalid")
     for group, minimum in ((bootstrap, 3), (releases, 1)):
         if not isinstance(group, dict) or set(group) != {"root_public_key", "endpoints"}:
             raise StatusProbeError("status signed-endpoint config is invalid")
@@ -201,12 +223,106 @@ def _validate_config(config: Mapping[str, Any], directory: pathlib.Path) -> dict
     return dict(config)
 
 
+def _data_plane_component(
+    config: Mapping[str, Any],
+    client: Fetcher,
+    checked_at: dt.datetime,
+    snapshot_path: pathlib.Path | None,
+) -> dict[str, Any]:
+    durations: list[float] = []
+    try:
+        if snapshot_path is None:
+            response = client.fetch(config["data_plane"]["url"], 64 * 1024)
+            durations.append(response.duration_seconds)
+        else:
+            if (
+                not snapshot_path.is_file()
+                or snapshot_path.is_symlink()
+                or snapshot_path.stat().st_size > 64 * 1024
+            ):
+                raise StatusProbeError("local Data Plane snapshot is absent or unsafe")
+            response = FetchResponse(snapshot_path.read_bytes(), {}, 0)
+        document = _read_json(response, "Data Plane snapshot")
+        expected_keys = {
+            "schema_version",
+            "generated_at",
+            "max_age_seconds",
+            "status",
+            "source_authentication",
+            "telemetry_verified",
+            "expected_entry_paths",
+            "fresh_entry_paths",
+            "available_entry_paths",
+            "redundant_entry_paths",
+        }
+        if set(document) != expected_keys or document.get("schema_version") != 1:
+            raise StatusProbeError("Data Plane snapshot contract is invalid")
+        if document.get("source_authentication") != "tls_basic_per_node":
+            raise StatusProbeError("Data Plane source is not authenticated")
+        if not isinstance(document.get("telemetry_verified"), bool):
+            raise StatusProbeError("Data Plane verification state is invalid")
+        maximum_age = document.get("max_age_seconds")
+        if not isinstance(maximum_age, int) or not 300 <= maximum_age <= 1800:
+            raise StatusProbeError("Data Plane snapshot freshness is invalid")
+        generated_at = _utc_time(document.get("generated_at"), "Data Plane snapshot")
+        age = (checked_at - generated_at).total_seconds()
+        if age < -300 or age > maximum_age:
+            raise StatusProbeError("Data Plane snapshot is stale")
+        counts = [
+            document.get("expected_entry_paths"),
+            document.get("fresh_entry_paths"),
+            document.get("available_entry_paths"),
+            document.get("redundant_entry_paths"),
+        ]
+        if any(isinstance(value, bool) or not isinstance(value, int) for value in counts):
+            raise StatusProbeError("Data Plane path counts are invalid")
+        expected, fresh, available, redundant = counts
+        if not (1 <= expected <= 32 and 0 <= redundant <= available <= fresh <= expected):
+            raise StatusProbeError("Data Plane path counts are invalid")
+        minimum_available = config["data_plane"]["minimum_available_entry_paths"]
+        if minimum_available > expected:
+            raise StatusProbeError("Data Plane path policy is invalid")
+        status = document.get("status")
+        operational = (
+            document["telemetry_verified"]
+            and fresh == expected
+            and available == expected
+            and redundant == expected
+        )
+        degraded = (
+            document["telemetry_verified"]
+            and available >= minimum_available
+            and not operational
+        )
+        outage = not document["telemetry_verified"] or available < minimum_available
+        if (
+            status not in {"operational", "degraded", "outage"}
+            or (status == "operational") != operational
+            or (status == "degraded") != degraded
+            or (status == "outage") != outage
+        ):
+            raise StatusProbeError("Data Plane status is inconsistent")
+        detail = f"{available} of {expected} authenticated entry paths available"
+        if status != "outage" and redundant < expected:
+            detail += f"; {redundant} retain full relay redundancy"
+        return _component("vpn-data-plane", "VPN network", status, detail, durations)
+    except (OSError, StatusProbeError):
+        return _component(
+            "vpn-data-plane",
+            "VPN network",
+            "outage",
+            "Authenticated Data Plane telemetry is unavailable or stale",
+            durations,
+        )
+
+
 def run_probe(
     config_path: pathlib.Path,
     *,
     fetcher: Fetcher | None = None,
     signature_verifier: Callable[[bytes, bytes, pathlib.Path], bool] = verify_ed25519,
     now: dt.datetime | None = None,
+    data_plane_snapshot_path: pathlib.Path | None = None,
 ) -> dict[str, Any]:
     try:
         config_raw = json.loads(config_path.read_text(encoding="utf-8"))
@@ -218,6 +334,9 @@ def run_probe(
     client = fetcher or HTTPSFetcher()
     checked_at = (now or dt.datetime.now(dt.timezone.utc)).astimezone(dt.timezone.utc)
     components: list[dict[str, Any]] = []
+
+    data_plane = _data_plane_component(config, client, checked_at, data_plane_snapshot_path)
+    components.append(data_plane)
 
     api_durations: list[float] = []
     api_ok = True
@@ -335,19 +454,19 @@ def run_probe(
     )
 
     states = {component["status"] for component in components}
-    if "outage" in states and not api_ok:
+    if not api_ok or data_plane["status"] == "outage":
         overall = "major_outage"
     elif states == {"operational"}:
         overall = "operational"
     else:
         overall = "degraded"
     return {
-        "schema_version": 1,
+        "schema_version": 2,
         "overall_status": overall,
         "generated_at": checked_at.isoformat().replace("+00:00", "Z"),
         "max_age_seconds": 900,
         "components": components,
-        "data_plane_note": "Authenticated VPN payload is monitored separately and is not inferred from public HTTP health.",
+        "data_plane_note": "VPN availability is derived from authenticated, freshness-checked synthetic entry-path telemetry. Customer traffic is not inspected.",
     }
 
 
@@ -355,9 +474,13 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=pathlib.Path, required=True)
     parser.add_argument("--output", type=pathlib.Path, required=True)
+    parser.add_argument("--data-plane-snapshot", type=pathlib.Path)
     arguments = parser.parse_args()
     try:
-        report = run_probe(arguments.config)
+        report = run_probe(
+            arguments.config,
+            data_plane_snapshot_path=arguments.data_plane_snapshot,
+        )
         arguments.output.parent.mkdir(parents=True, exist_ok=True)
         arguments.output.write_text(json.dumps(report, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     except (OSError, ValueError, StatusProbeError) as error:
